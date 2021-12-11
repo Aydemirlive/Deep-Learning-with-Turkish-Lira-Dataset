@@ -1,0 +1,174 @@
+import numpy as np
+import pandas as pd 
+import matplotlib.pyplot as plt
+import glob
+import re
+import skimage 
+import os
+
+from sklearn.model_selection import train_test_split
+from keras import backend as K
+from keras.utils import to_categorical
+from keras.layers import Dense
+from keras.models import Sequential
+from keras.callbacks import EarlyStopping, ModelCheckpoint
+from keras.applications import InceptionResNetV2
+from keras.layers import Conv2D, MaxPooling2D, Flatten, Dropout, Activation
+from keras.layers.advanced_activations import LeakyReLU
+from keras.preprocessing.image import ImageDataGenerator
+from PIL import Image
+
+dosya_yolu='/kaggle/input/turkish-lira-banknote-dataset/'
+train_lst = []
+test_lst = []
+with open ('/kaggle/input/turkish-lira-banknote-dataset/validation.txt') as test_f:
+    reader=test_f.read()
+    lst=reader.split()
+    for img in lst:
+        test_lst.append(dosya_yolu+img)
+
+with open ('/kaggle/input/turkish-lira-banknote-dataset/train.txt') as train_f:
+    reader=train_f.read()
+    lst=reader.split()
+    for img in lst:
+        train_lst.append(dosya_yolu+img)
+# setting the image shape
+img=plt.imread('/kaggle/input/turkish-lira-banknote-dataset/20/20_1_0005.png')
+height=img.shape[0]
+width=img.shape[0]
+channels=img.shape[2]
+print('image shape: width={}, height={}, channels={}'.format(height, width, channels))
+
+def show_image(path):
+    comp=re.compile(r'[\w\d\/\-]+\/(\d{0,5})\/[\w\d\_\.]+')
+    val=comp.findall(path)[0]
+    img=plt.imread(path)
+    plt.imshow(img)
+    plt.title('Turkish banknote: {}'.format(val))
+    plt.show()
+
+train_labels = []
+test_labels = []
+for path in train_lst:
+    comp=re.compile(r'[\w\d\/\-]+\/(\d{0,5})\/[\w\d\_\.]+')
+    val=comp.findall(path)[0]
+    train_labels.append(val)
+for path in test_lst:
+    comp=re.compile(r'[\w\d\/\-]+\/(\d{0,5})\/[\w\d\_\.]+')
+    val=comp.findall(path)[0]
+    test_labels.append(val)
+train_data=pd.DataFrame({
+    'image_path':train_lst,
+    'label':train_labels
+})
+test_data=pd.DataFrame({
+    'image_path':test_lst,
+    'label':test_labels
+})
+
+train_data['label'].unique()
+
+lst=[train_data[train_data['label']=='5']['image_path'].tolist()[0],
+     train_data[train_data['label']=='10']['image_path'].tolist()[0],
+     train_data[train_data['label']=='20']['image_path'].tolist()[0],
+     train_data[train_data['label']=='50']['image_path'].tolist()[0],
+     train_data[train_data['label']=='100']['image_path'].tolist()[0],
+     train_data[train_data['label']=='200']['image_path'].tolist()[0]]
+
+def numarala(x):
+    if x == '5':
+        return 0
+    if x == '10':
+        return 1
+    if x == '20':
+        return 2
+    if x == '50':
+        return 3
+    if x == '100':
+        return 4
+    if x == '200':
+        return 5
+train_data['labels']=train_data['label'].apply(numarala)
+test_data['labels']=test_data['label'].apply(numarala)
+train_data.drop('label', axis=1, inplace=True)
+test_data.drop('label', axis=1, inplace=True)
+train_ohe=to_categorical(test_data['labels'], 6)
+test_ohe=to_categorical(test_data['labels'], 6)
+
+K.clear_session()
+model=Sequential()
+model.add(Conv2D(input_shape=(64, 64 ,3),padding='same',kernel_size=3,filters=16))
+model.add(LeakyReLU(0.1))
+model.add(Conv2D(padding='same',kernel_size=3,filters=32))
+model.add(LeakyReLU(0.1))
+model.add(MaxPooling2D(pool_size=(2,2)))
+model.add(Dropout(0.25))
+model.add(Conv2D(padding='same',kernel_size=3,filters=32))
+model.add(LeakyReLU(0.1))
+model.add(Conv2D(padding='same',kernel_size=3,filters=64))
+model.add(LeakyReLU(0.1))
+model.add(MaxPooling2D(pool_size=(2,2)))
+model.add(Dropout(0.25))
+model.add(Flatten())
+model.add(Dense(256))
+model.add(Dropout(0.5))
+model.add(LeakyReLU(0.1))
+model.add(Dense(6))
+model.add(Activation('softmax'))
+model.summary()
+
+model.compile(
+    loss='categorical_crossentropy', # this is our cross-entropy
+    optimizer='adam',
+    metrics=['accuracy']  # report accuracy during training
+)
+import cv2
+def isle_img(df):
+    image_lst=[]
+    for path in df:
+        img=cv2.imread(path)
+        img_array = Image.fromarray(img, 'RGB')
+        resized_img = img_array.resize((64, 64))
+        image_lst.append(np.array(resized_img))
+    return image_lst
+train_imgs=isle_img(train_data['image_path'].tolist())
+test_imgs=isle_img(test_data['image_path'].tolist())
+train_imgs=np.array(train_imgs)
+test_imgs=np.array(test_imgs)
+x_train, x_test, y_train, y_test=train_test_split(train_imgs,
+                                                  train_data['labels'],
+                                                  test_size=0.2,
+                                                  random_state=42)
+
+y_test_clas=to_categorical(y_test, 6)
+y_train_clas=to_categorical(y_train, 6)
+
+model.fit(x_train,
+          y_train_clas,
+          batch_size=100,
+          epochs=25,
+          validation_data=(x_test, y_test_clas))
+y_val_clas=to_categorical(test_data['labels'], 6)
+model.evaluate(test_imgs, y_val_clas, batch_size=100)
+sonuc_labels=model.predict_classes(test_imgs)
+pd.DataFrame({
+    'labels':test_data['labels'],
+    'predicted_labels':sonuc_labels
+})
+converter={
+    0:5,
+    1:10,
+    2:20,
+    3:50,
+    4:100,
+    5:200
+}
+sonuc_labels_2=[]
+for i in sonuc_labels:
+    sonuc_labels_2.append(converter[i])
+show_image(test_data['image_path'].to_list()[330])
+print(test_labels[330] + " lira")
+print("Dahil olduğu sınıf :")
+print(sonuc_labels[330])
+print("Test resimlerinin sınıfları :")
+print(sonuc_labels)
